@@ -277,20 +277,19 @@ keep_dict = {'1.8M': [32, 32, 103, 103, 64, 13, 13, 64, 26, 26,
 
 # (80x80) flops: 0.044, params: 0.41
 def MiniFASNetV1(embedding_size=128, conv6_kernel=(7, 7),
-                     drop_p=0.2, num_classes=3, img_channel=3):
+                     drop_p=0.2, num_classes=2, img_channel=3): # <--- UBAH JADI 2 (sebelumnya 3)
     return MiniFASNet(keep_dict['1.8M'], embedding_size, conv6_kernel, drop_p, num_classes, img_channel)
-
 
 # (80x80) flops: 0.044, params: 0.43
 def MiniFASNetV2(embedding_size=128, conv6_kernel=(7, 7),
-                     drop_p=0.2, num_classes=3, img_channel=3):
+                     drop_p=0.2, num_classes=2, img_channel=3): # <--- UBAH JADI 2 (sebelumnya 3)
     return MiniFASNet(keep_dict['1.8M_'], embedding_size, conv6_kernel, drop_p, num_classes, img_channel)
 
 def MiniFASNetV1SE(embedding_size=128, conv6_kernel=(7, 7),
-                   drop_p=0.75, num_classes=3, img_channel=3):
+                   drop_p=0.75, num_classes=2, img_channel=3): # <--- UBAH JADI 2 (sebelumnya 3)
     return MiniFASNetSE(keep_dict['1.8M'], embedding_size, conv6_kernel,drop_p, num_classes, img_channel)
 
 # (80x80) flops: 0.044, params: 0.43
 def MiniFASNetV2SE(embedding_size=128, conv6_kernel=(7, 7),
-                   drop_p=0.75, num_classes=4, img_channel=3):
+                   drop_p=0.75, num_classes=2, img_channel=3): # <--- UBAH JADI 2 (sebelumnya 4)
     return MiniFASNetSE(keep_dict['1.8M_'], embedding_size, conv6_kernel,drop_p, num_classes, img_channel)
