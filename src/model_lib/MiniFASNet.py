@@ -162,7 +162,7 @@ class Depth_Wise_SE(Module):
 
 class MiniFASNet(Module):
     def __init__(self, keep, embedding_size, conv6_kernel=(7, 7),
-                 drop_p=0.0, num_classes=3, img_channel=3):
+                 drop_p=0.0, num_classes=2, img_channel=3):
         super(MiniFASNet, self).__init__()
         self.embedding_size = embedding_size
 
