@@ -29,7 +29,7 @@ def get_default_config():
 
     # model
     conf.num_classes = 2
-    conf.input_channel = 2
+    conf.input_channel = 3
     conf.embedding_size = 128
 
     # dataset
