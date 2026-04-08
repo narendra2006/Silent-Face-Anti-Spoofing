@@ -12,34 +12,26 @@ class AntiSpoofPredict(object):
         self.device = torch.device(f'cuda:{device_id}' if torch.cuda.is_available() else 'cpu')
         
     def _load_model(self, model_path):
-        model_name = os.path.basename(model_path)
-        h, w, m_type, _ = parse_model_name(model_name)
-        self.model = MODEL_DICT[m_type](conv6_kernel=(h//16, w//16)).to(self.device)
-        
-        # Load raw state_dict
-        sd = torch.load(model_path, map_location=self.device)
-        clean_sd = OrderedDict()
-        
-        # Proses pembersihan otomatis (Auto-Cleaner v2)
-        for k, v in sd.items():
-            # 1. Buang FTGenerator karena tidak dipakai saat inferensi/prediksi
-            if 'FTGenerator' in k:
-                continue
+            import re # Import di luar loop
+            sd = torch.load(model_path, map_location=self.device)
+            clean_sd = OrderedDict()
+            
+            # Proses pembersihan otomatis (Auto-Cleaner)
+            for k, v in sd.items():
+                # 1. Buang FTGenerator karena tidak dipakai saat inferensi
+                if 'FTGenerator' in k:
+                    continue
                 
-            # 2. Bersihkan prefix 'module.' dan 'model.' di awal string
-            new_k = k
-            if new_k.startswith('module.'):
-                new_k = new_k.replace('module.', '', 1)
-            if new_k.startswith('model.'):
-                new_k = new_k.replace('model.', '', 1)
-            
-            # 3. Perbaiki missing layer path jika masih ada (contoh: conv_3.0. -> conv_3.model.0.)
-            new_k = re.sub(r'conv_(\d+)\.(\d+)\.', r'conv_\1.model.\2.', new_k)
-            
-            clean_sd[new_k] = v
-            
-        # Load clean weights ke dalam model
-        self.model.load_state_dict(clean_sd, strict=True)
+                # 2. Buang prefix 'module.' jika dilatih dengan DataParallel
+                new_k = k.replace('module.', '')
+                
+                # 3. Perbaiki missing layer path (contoh: conv_3.0 -> conv_3.model.0)
+                new_k = re.sub(r'conv_(\d+)\.(\d+)\.', r'conv_\1.model.\2.', new_k)
+                
+                clean_sd[new_k] = v
+                
+            # Load clean weights ke dalam model
+            self.model.load_state_dict(clean_sd, strict=True)
         
     def predict(self, img, path):
         self._load_model(path); self.model.eval()
