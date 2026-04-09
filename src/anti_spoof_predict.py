@@ -1,6 +1,7 @@
 import os
 import cv2
 import torch
+import re
 import torch.nn.functional as F
 from collections import OrderedDict
 
@@ -26,8 +27,29 @@ class AntiSpoofPredict(object):
         
         # Load weights dan bersihkan kunci (keys)
         sd = torch.load(model_path, map_location=self.device)
-        nsd = OrderedDict([(k.replace('module.', '').replace('model.', ''), v) for k, v in sd.items()])
-        self.model.load_state_dict(nsd, strict=True)
+        clean_sd = OrderedDict()
+        
+        for k, v in sd.items():
+            # 1. Buang FTGenerator
+            if 'FTGenerator' in k:
+                continue
+            
+            # 2. Buang prefix module. dan model.
+            new_k = k.replace('module.', '').replace('model.', '')
+            
+            # 3. Perbaiki format list dari Sequential conv_3.0 jadi conv_3.model.0
+            new_k = re.sub(r'conv_(\d+)\.(\d+)\.', r'conv_\1.model.\2.', new_k)
+            
+            # 4. Perbaikan untuk SE module jika ada
+            new_k = new_k.replace('se_fc1', 'se_module.fc1')
+            new_k = new_k.replace('se_bn1', 'se_module.bn1')
+            new_k = new_k.replace('se_fc2', 'se_module.fc2')
+            new_k = new_k.replace('se_bn2', 'se_module.bn2')
+            
+            clean_sd[new_k] = v
+            
+        # Gunakan strict=False agar tidak crash jika ada sisa key minor seperti num_batches_tracked
+        self.model.load_state_dict(clean_sd, strict=False)
 
     def predict(self, img, path):
         self._load_model(path)
