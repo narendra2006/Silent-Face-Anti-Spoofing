@@ -4,6 +4,7 @@ import torch
 import re
 import torch.nn.functional as F
 from collections import OrderedDict
+from mtcnn import MTCNN
 
 from src.model_lib.MiniFASNet import MiniFASNetV1SE, MiniFASNetV2
 from src.data_io.transform import SDKTestTransform
@@ -63,8 +64,22 @@ class AntiSpoofPredict(object):
             return F.softmax(self.model(img), dim=-1).cpu().numpy()
 
     def get_bbox(self, img):
-        # Deteksi letak wajah menggunakan Haar Cascade OpenCV
-        fd = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        fs = fd.detectMultiScale(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 1.1, 4)
+        # 1. Inisialisasi MTCNN
+        detector = MTCNN()
         
-        return list(fs[0]) if len(fs) > 0 else [0, 0, img.shape[1], img.shape[0]]
+        # 2. MTCNN butuh format RGB
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        faces = detector.detect_faces(img_rgb)
+        
+        # 3. Jika wajah ditemukan, ambil koordinatnya
+        if len(faces) > 0:
+            box = faces[0]['box']
+            # Format box MTCNN adalah [x, y, width, height], sama persis dengan Haar
+            # Hindari nilai negatif jika wajah terpotong di pinggir gambar
+            x, y, w, h = box
+            x = max(0, x)
+            y = max(0, y)
+            return [x, y, w, h]
+        else:
+            # Jika tidak ada wajah sama sekali, kembalikan ukuran penuh gambar
+            return [0, 0, img.shape[1], img.shape[0]]
