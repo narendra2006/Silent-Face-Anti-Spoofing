@@ -236,7 +236,7 @@ class MiniFASNet(Module):
 
 
 class MiniFASNetSE(MiniFASNet):
-    def __init__(self, keep, embedding_size, conv6_kernel=(7, 7),drop_p=0.75, num_classes=4, img_channel=3):
+    def __init__(self, keep, embedding_size, conv6_kernel=(7, 7),drop_p=0.75, num_classes=2, img_channel=3):
         super(MiniFASNetSE, self).__init__(keep=keep, embedding_size=embedding_size, conv6_kernel=conv6_kernel,
                                                drop_p=drop_p, num_classes=num_classes, img_channel=img_channel)
 
@@ -262,7 +262,7 @@ class MiniFASNetSE(MiniFASNet):
 
 
 
-keep_dict = {'1.8M': [32, 32, 103, 103, 64, 13, 13, 64, 26, 26,
+keep_dict = {'1.8M_': [32, 32, 103, 103, 64, 13, 13, 64, 26, 26,
                       64, 13, 13, 64, 52, 52, 64, 231, 231, 128,
                       154, 154, 128, 52, 52, 128, 26, 26, 128, 52,
                       52, 128, 26, 26, 128, 26, 26, 128, 308, 308,
@@ -278,7 +278,7 @@ keep_dict = {'1.8M': [32, 32, 103, 103, 64, 13, 13, 64, 26, 26,
 # (80x80) flops: 0.044, params: 0.41
 def MiniFASNetV1(embedding_size=128, conv6_kernel=(7, 7),
                      drop_p=0.2, num_classes=2, img_channel=3): # <--- UBAH JADI 2 (sebelumnya 3)
-    return MiniFASNet(keep_dict['1.8M'], embedding_size, conv6_kernel, drop_p, num_classes, img_channel)
+    return MiniFASNet(keep_dict['1.8M_'], embedding_size, conv6_kernel, drop_p, num_classes, img_channel)
 
 # (80x80) flops: 0.044, params: 0.43
 def MiniFASNetV2(embedding_size=128, conv6_kernel=(7, 7),
@@ -287,7 +287,7 @@ def MiniFASNetV2(embedding_size=128, conv6_kernel=(7, 7),
 
 def MiniFASNetV1SE(embedding_size=128, conv6_kernel=(7, 7),
                    drop_p=0.75, num_classes=2, img_channel=3): # <--- UBAH JADI 2 (sebelumnya 3)
-    return MiniFASNetSE(keep_dict['1.8M'], embedding_size, conv6_kernel,drop_p, num_classes, img_channel)
+    return MiniFASNetSE(keep_dict['1.8M_'], embedding_size, conv6_kernel,drop_p, num_classes, img_channel)
 
 # (80x80) flops: 0.044, params: 0.43
 def MiniFASNetV2SE(embedding_size=128, conv6_kernel=(7, 7),
