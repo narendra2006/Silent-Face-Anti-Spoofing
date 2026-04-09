@@ -1,40 +1,29 @@
-# -*- coding: utf-8 -*-
-# @Time : 20-6-4 下午2:13
-# @Author : zhuying
-# @Company : Minivision
-# @File : utility.py
-# @Software : PyCharm
-
-from datetime import datetime
 import os
-
+from datetime import datetime
 
 def get_time():
     return (str(datetime.now())[:-10]).replace(' ', '-').replace(':', '-')
 
-
 def get_kernel(height, width):
-    kernel_size = ((height + 15) // 16, (width + 15) // 16)
-    return kernel_size
-
+    return ((height + 15) // 16, (width + 15) // 16)
 
 def get_width_height(patch_info):
     w_input = int(patch_info.split('x')[-1])
     h_input = int(patch_info.split('x')[0].split('_')[-1])
-    return w_input,h_input
-
+    return w_input, h_input
 
 def parse_model_name(model_name):
-    info = model_name.split('_')[0:-1]
-    h_input, w_input = info[-1].split('x')
-    model_type = model_name.split('.pth')[0].split('_')[-1]
-
-    if info[0] == "org":
-        scale = None
-    else:
-        scale = float(info[0])
-    return int(h_input), int(w_input), model_type, scale
-
+    name = model_name.replace('.pth', '')
+    parts = name.split('_')
+    h_input, w_input = 80, 80
+    
+    for p in parts:
+        if 'x' in p and p[0].isdigit():
+            h_input, w_input = map(int, p.split('x'))
+            break
+            
+    model_type = 'MiniFASNetV1SE' if 'V1SE' in name or '1_80x80' in name else 'MiniFASNetV2'
+    return h_input, w_input, model_type, 1.0
 
 def make_if_not_exist(folder_path):
     if not os.path.exists(folder_path):
