@@ -69,17 +69,23 @@ class AntiSpoofPredict(object):
         
         # 2. MTCNN butuh format RGB
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        faces = detector.detect_faces(img_rgb)
         
-        # 3. Jika wajah ditemukan, ambil koordinatnya
-        if len(faces) > 0:
-            box = faces[0]['box']
-            # Format box MTCNN adalah [x, y, width, height], sama persis dengan Haar
-            # Hindari nilai negatif jika wajah terpotong di pinggir gambar
-            x, y, w, h = box
-            x = max(0, x)
-            y = max(0, y)
-            return [x, y, w, h]
-        else:
-            # Jika tidak ada wajah sama sekali, kembalikan ukuran penuh gambar
+        try:
+            faces = detector.detect_faces(img_rgb)
+            
+            # 3. Jika wajah ditemukan secara normal
+            if len(faces) > 0:
+                box = faces[0]['box']
+                x, y, w, h = box
+                x = max(0, x)
+                y = max(0, y)
+                return [x, y, w, h]
+            else:
+                # Fallback 1: MTCNN jalan tapi mengembalikan list kosong
+                return [0, 0, img.shape[1], img.shape[0]]
+                
+        except Exception as e:
+            # Fallback 2: MTCNN CRASH (seperti error ValueError: shape (0, 48, 48, 3))
+            # Sangat berguna untuk foto extreme close-up
+            print("⚠️ [Sistem] MTCNN gagal memotong wajah. Menggunakan seluruh frame gambar.")
             return [0, 0, img.shape[1], img.shape[0]]
