@@ -87,5 +87,5 @@ class AntiSpoofPredict(object):
         except Exception as e:
             # Fallback 2: MTCNN CRASH (seperti error ValueError: shape (0, 48, 48, 3))
             # Sangat berguna untuk foto extreme close-up
-            print("⚠️ [Sistem] MTCNN gagal memotong wajah. Menggunakan seluruh frame gambar.")
+            # print("⚠️ [Sistem] MTCNN gagal memotong wajah. Menggunakan seluruh frame gambar.")
             return [0, 0, img.shape[1], img.shape[0]]
