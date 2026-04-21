@@ -4,11 +4,14 @@ import torch
 import re
 import torch.nn.functional as F
 from collections import OrderedDict
-from mtcnn import MTCNN
+import mediapipe as mp
 
 from src.model_lib.MiniFASNet import MiniFASNetV1SE, MiniFASNetV2
 from src.data_io.transform import SDKTestTransform
 from src.utility import parse_model_name
+
+mp_face_detection = mp.solutions.face_detection
+face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
 
 MODEL_DICT = {
     'MiniFASNetV1SE': MiniFASNetV1SE, 
@@ -63,29 +66,38 @@ class AntiSpoofPredict(object):
         with torch.no_grad():
             return F.softmax(self.model(img), dim=-1).cpu().numpy()
 
-    def get_bbox(self, img):
-        # 1. Inisialisasi MTCNN
-        detector = MTCNN()
+    def get_bbox(self, image_bgr):
+        """
+        Menggantikan fungsi MTCNN menggunakan MediaPipe. 
+        Mengembalikan [x, y, width, height]
+        """
+        height, width, _ = image_bgr.shape
         
-        # 2. MTCNN butuh format RGB
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # MediaPipe membutuhkan format RGB
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        results = face_detection.process(image_rgb)
         
-        try:
-            faces = detector.detect_faces(img_rgb)
-            
-            # 3. Jika wajah ditemukan secara normal
-            if len(faces) > 0:
-                box = faces[0]['box']
-                x, y, w, h = box
-                x = max(0, x)
-                y = max(0, y)
-                return [x, y, w, h]
-            else:
-                # Fallback 1: MTCNN jalan tapi mengembalikan list kosong
-                return [0, 0, img.shape[1], img.shape[0]]
-                
-        except Exception as e:
-            # Fallback 2: MTCNN CRASH (seperti error ValueError: shape (0, 48, 48, 3))
-            # Sangat berguna untuk foto extreme close-up
-            # print("⚠️ [Sistem] MTCNN gagal memotong wajah. Menggunakan seluruh frame gambar.")
-            return [0, 0, img.shape[1], img.shape[0]]
+        # Jika tidak ada wajah terdeteksi
+        if not results.detections:
+            return None
+        
+        # Ambil wajah pertama yang terdeteksi
+        detection = results.detections[0]
+        bboxC = detection.location_data.relative_bounding_box
+        
+        # Konversi persentase ke pixel
+        x = int(bboxC.xmin * width)
+        y = int(bboxC.ymin * height)
+        w = int(bboxC.width * width)
+        h = int(bboxC.height * height)
+        
+        # Padding agar dagu/dahi tidak terpotong ekstrem
+        padding_x = int(w * 0.1)
+        padding_y = int(h * 0.1)
+        
+        x = max(0, x - padding_x)
+        y = max(0, y - padding_y)
+        w = min(width - x, w + (padding_x * 2))
+        h = min(height - y, h + (padding_y * 2))
+        
+        return [x, y, w, h]
