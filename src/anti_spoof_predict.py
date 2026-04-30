@@ -4,6 +4,7 @@ import torch
 import re
 import numpy as np
 import torch.nn.functional as F
+import onnxruntime as ort
 from collections import OrderedDict
 from src.model_lib.MiniFASNet import MiniFASNetV1SE, MiniFASNetV2
 from src.data_io.transform import SDKTestTransform
@@ -45,13 +46,26 @@ class AntiSpoofPredict(object):
         self.haar  = self._load_haar()
 
     def _load_scrfd(self):
+        """
+        Load SCRFD menggunakan ONNX Runtime.
+        Lebih kompatibel dari cv2.dnn untuk model InsightFace.
+        """
         if not os.path.exists(SCRFD_MODEL_PATH):
             print("⚠️ [L1] scrfd.onnx tidak ditemukan")
             return None
         try:
-            net = cv2.dnn.readNetFromONNX(SCRFD_MODEL_PATH)
-            print("✅ [L1] SCRFD siap")
-            return net
+            # ONNX Runtime otomatis pakai GPU jika tersedia
+            providers = (
+                ['CUDAExecutionProvider', 'CPUExecutionProvider']
+                if torch.cuda.is_available()
+                else ['CPUExecutionProvider']
+            )
+            session = ort.InferenceSession(
+                SCRFD_MODEL_PATH,
+                providers=providers
+            )
+            print("✅ [L1] SCRFD siap (via ONNX Runtime)")
+            return session
         except Exception as e:
             print(f"⚠️ [L1] SCRFD gagal: {e}")
             return None
@@ -85,35 +99,55 @@ class AntiSpoofPredict(object):
         return clf
 
     def _deteksi_scrfd(self, img):
-        h, w = img.shape[:2]
-        blob = cv2.dnn.blobFromImage(
-            img,
-            scalefactor = 1.0 / 128.0,
-            size        = (640, 640),
-            mean        = (127.5, 127.5, 127.5),
-            swapRB      = True
-        )
-        self.scrfd.setInput(blob)
-        outputs    = self.scrfd.forward(self.scrfd.getUnconnectedOutLayersNames())
-        detections = outputs[0][0] if len(outputs) > 0 else []
+        """
+        Deteksi wajah menggunakan SCRFD via ONNX Runtime.
 
-        best_conf = 0
-        best_box  = None
+        SCRFD menerima input: [1, 3, 640, 640] float32
+        SCRFD menghasilkan output: bounding box + score + landmark
+        """
+        h_ori, w_ori = img.shape[:2]
 
-        for det in detections:
-            if len(det) < 5:
-                continue
-            conf = float(det[4])
-            if conf < 0.50 or conf <= best_conf:
-                continue
-            best_conf = conf
-            x1 = max(0, int(det[0] * w / 640))
-            y1 = max(0, int(det[1] * h / 640))
-            x2 = int(det[2] * w / 640)
-            y2 = int(det[3] * h / 640)
-            best_box = [x1, y1, x2 - x1, y2 - y1]
+        # Resize ke 640×640 dan normalisasi
+        img_resized = cv2.resize(img, (640, 640))
+        img_rgb     = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+        img_norm    = (img_rgb.astype(np.float32) - 127.5) / 128.0
 
-        return best_box
+        # Format: [H, W, C] → [1, C, H, W]
+        blob = np.transpose(img_norm, (2, 0, 1))[np.newaxis, :]
+
+        # Jalankan inferensi
+        input_name = self.scrfd.get_inputs()[0].name
+        outputs    = self.scrfd.run(None, {input_name: blob})
+
+        # Output SCRFD: [scores, bboxes, landmarks]
+        # Format bbox: [x1, y1, x2, y2] dalam skala 640×640
+        if len(outputs) < 2:
+            return None
+
+        scores = outputs[0].flatten()
+        bboxes = outputs[1].reshape(-1, 4)
+
+        best_idx  = -1
+        best_conf = 0.50  # Threshold minimum
+
+        for i, score in enumerate(scores):
+            if float(score) > best_conf:
+                best_conf = float(score)
+                best_idx  = i
+
+        if best_idx == -1:
+            return None
+
+        # Konversi koordinat dari skala 640 ke skala asli
+        x1 = int(bboxes[best_idx][0] * w_ori / 640)
+        y1 = int(bboxes[best_idx][1] * h_ori / 640)
+        x2 = int(bboxes[best_idx][2] * w_ori / 640)
+        y2 = int(bboxes[best_idx][3] * h_ori / 640)
+
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+
+        return [x1, y1, x2 - x1, y2 - y1]
 
     def get_bbox(self, img):
         """
@@ -178,9 +212,9 @@ class AntiSpoofPredict(object):
         if self._loaded_model_path == model_path and self.model is not None:
             return
 
-        model_name       = os.path.basename(model_path)
-        h, w, m_type, _  = parse_model_name(model_name)
-        self.model       = MODEL_DICT[m_type](
+        model_name      = os.path.basename(model_path)
+        h, w, m_type, _ = parse_model_name(model_name)
+        self.model      = MODEL_DICT[m_type](
             conv6_kernel=(h // 16, w // 16)
         ).to(self.device)
 
