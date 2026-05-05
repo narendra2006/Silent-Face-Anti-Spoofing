@@ -152,34 +152,32 @@ class AntiSpoofPredict(object):
     def get_bbox(self, img):
         """
         Deteksi bounding box wajah.
-        Urutan: SCRFD → YuNet → Haar → Full Frame
+        Urutan: YuNet → Haar → Full Frame
         """
         h_img, w_img = img.shape[:2]
         full_frame   = [0, 0, w_img, h_img]
-
-        if self.scrfd is not None:
-            try:
-                box = self._deteksi_scrfd(img)
-                if box is not None:
-                    return self._add_padding(img, *box)
-            except Exception:
-                pass
-
+    
         if self.yunet is not None:
             try:
                 self.yunet.setInputSize((w_img, h_img))
                 _, faces = self.yunet.detect(img)
+    
                 if faces is not None and len(faces) > 0:
                     face       = faces[0]
                     x, y, w, h = (
                         int(face[0]), int(face[1]),
                         int(face[2]), int(face[3])
                     )
-                    if float(face[14]) >= 0.75:
+                    confidence = float(face[14])
+    
+                    if confidence >= 0.75 and self._bbox_valid(
+                        x, y, w, h, w_img, h_img
+                    ):
                         return self._add_padding(img, x, y, w, h)
+    
             except Exception:
                 pass
-
+    
         if self.haar is not None:
             try:
                 gray  = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -188,21 +186,50 @@ class AntiSpoofPredict(object):
                 )
                 if len(faces) > 0:
                     x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-                    return self._add_padding(img, x, y, w, h)
+                    if self._bbox_valid(x, y, w, h, w_img, h_img):
+                        return self._add_padding(img, x, y, w, h)
             except Exception:
                 pass
-
+    
         return full_frame
 
-    def _add_padding(self, img, x, y, w, h, ratio=0.2):
-        h_img, w_img = img.shape[:2]
-        pad_x = int(w * ratio)
-        pad_y = int(h * ratio)
-        x1    = max(0,     x - pad_x)
-        y1    = max(0,     y - pad_y)
-        x2    = min(w_img, x + w + pad_x)
-        y2    = min(h_img, y + h + pad_y)
-        return [x1, y1, x2 - x1, y2 - y1]
+    def _bbox_valid(self, x, y, w, h, w_img, h_img):
+        """
+        Validasi apakah bounding box masuk akal.
+    
+        Sebuah bbox dianggap TIDAK VALID jika:
+        1. Terlalu kecil  → kemungkinan mendeteksi bagian bukan wajah
+        2. Terlalu besar  → hampir full frame, deteksi gagal
+        3. Terlalu di atas/bawah → mendeteksi dahi atau dagu saja
+        """
+        luas_bbox  = w * h
+        luas_frame = w_img * h_img
+        rasio      = luas_bbox / luas_frame
+    
+        # Bbox terlalu kecil (< 3% frame) → deteksi bagian kecil wajah
+        if rasio < 0.03:
+            return False
+    
+        # Bbox terlalu besar (> 85% frame) → sama dengan full frame
+        if rasio > 0.85:
+            return False
+    
+        # Bbox terlalu sempit (lebar << tinggi) → bukan wajah
+        aspek = w / max(h, 1)
+        if aspek < 0.4 or aspek > 2.5:
+            return False
+    
+        return True
+    
+        def _add_padding(self, img, x, y, w, h, ratio=0.2):
+            h_img, w_img = img.shape[:2]
+            pad_x = int(w * ratio)
+            pad_y = int(h * ratio)
+            x1    = max(0,     x - pad_x)
+            y1    = max(0,     y - pad_y)
+            x2    = min(w_img, x + w + pad_x)
+            y2    = min(h_img, y + h + pad_y)
+            return [x1, y1, x2 - x1, y2 - y1]
 
     # =========================================================================
     # ANTI-SPOOFING
