@@ -4,7 +4,6 @@ import torch
 import re
 import numpy as np
 import torch.nn.functional as F
-import onnxruntime as ort
 from collections import OrderedDict
 from src.model_lib.MiniFASNet import MiniFASNetV1SE, MiniFASNetV2
 from src.data_io.transform import SDKTestTransform
@@ -15,7 +14,6 @@ MODEL_DICT = {
     'MiniFASNetV2'  : MiniFASNetV2
 }
 
-SCRFD_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'scrfd.onnx')
 YUNET_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'yunet.onnx')
 
 
@@ -23,7 +21,7 @@ class AntiSpoofPredict(object):
     """
     Kelas utama prediksi anti-spoofing wajah.
 
-    Cascade Detector : SCRFD → YuNet → Haar → Full Frame
+    Cascade Detector : YuNet -> Haar -> Full Frame
     Anti-Spoofing    : MiniFASNet (3 skala, ensemble)
     """
 
@@ -41,38 +39,12 @@ class AntiSpoofPredict(object):
     # =========================================================================
 
     def _init_detectors(self):
-        self.scrfd = self._load_scrfd()
         self.yunet = self._load_yunet()
         self.haar  = self._load_haar()
 
-    def _load_scrfd(self):
-        """
-        Load SCRFD menggunakan ONNX Runtime.
-        Lebih kompatibel dari cv2.dnn untuk model InsightFace.
-        """
-        if not os.path.exists(SCRFD_MODEL_PATH):
-            print("⚠️ [L1] scrfd.onnx tidak ditemukan")
-            return None
-        try:
-            # ONNX Runtime otomatis pakai GPU jika tersedia
-            providers = (
-                ['CUDAExecutionProvider', 'CPUExecutionProvider']
-                if torch.cuda.is_available()
-                else ['CPUExecutionProvider']
-            )
-            session = ort.InferenceSession(
-                SCRFD_MODEL_PATH,
-                providers=providers
-            )
-            print("✅ [L1] SCRFD siap (via ONNX Runtime)")
-            return session
-        except Exception as e:
-            print(f"⚠️ [L1] SCRFD gagal: {e}")
-            return None
-
     def _load_yunet(self):
         if not os.path.exists(YUNET_MODEL_PATH):
-            print("⚠️ [L2] yunet.onnx tidak ditemukan")
+            print("⚠️ [L1] yunet.onnx tidak ditemukan")
             return None
         try:
             net = cv2.FaceDetectorYN.create(
@@ -83,85 +55,57 @@ class AntiSpoofPredict(object):
                 nms_threshold   = 0.30,
                 top_k           = 1
             )
-            print("✅ [L2] YuNet siap")
+            print("✅ [L1] YuNet siap")
             return net
         except Exception as e:
-            print(f"⚠️ [L2] YuNet gagal: {e}")
+            print(f"⚠️ [L1] YuNet gagal: {e}")
             return None
 
     def _load_haar(self):
         path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         clf  = cv2.CascadeClassifier(path)
         if clf.empty():
-            print("⚠️ [L3] Haar gagal")
+            print("⚠️ [L2] Haar gagal")
             return None
-        print("✅ [L3] Haar Cascade siap")
+        print("✅ [L2] Haar Cascade siap")
         return clf
 
-    def _deteksi_scrfd(self, img):
+    def _bbox_valid(self, x, y, w, h, w_img, h_img):
         """
-        Deteksi wajah menggunakan SCRFD via ONNX Runtime.
-
-        SCRFD menerima input: [1, 3, 640, 640] float32
-        SCRFD menghasilkan output: bounding box + score + landmark
+        Validasi apakah bounding box masuk akal.
+        Bbox dianggap tidak valid jika:
+        - Terlalu kecil  : kemungkinan mendeteksi bagian kecil wajah
+        - Terlalu besar  : hampir sama dengan full frame
+        - Rasio aneh     : terlalu sempit atau terlalu lebar
         """
-        h_ori, w_ori = img.shape[:2]
+        luas_bbox  = w * h
+        luas_frame = w_img * h_img
+        rasio      = luas_bbox / luas_frame
 
-        # Resize ke 640×640 dan normalisasi
-        img_resized = cv2.resize(img, (640, 640))
-        img_rgb     = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
-        img_norm    = (img_rgb.astype(np.float32) - 127.5) / 128.0
+        if rasio < 0.03:
+            return False
 
-        # Format: [H, W, C] → [1, C, H, W]
-        blob = np.transpose(img_norm, (2, 0, 1))[np.newaxis, :]
+        if rasio > 0.85:
+            return False
 
-        # Jalankan inferensi
-        input_name = self.scrfd.get_inputs()[0].name
-        outputs    = self.scrfd.run(None, {input_name: blob})
+        aspek = w / max(h, 1)
+        if aspek < 0.4 or aspek > 2.5:
+            return False
 
-        # Output SCRFD: [scores, bboxes, landmarks]
-        # Format bbox: [x1, y1, x2, y2] dalam skala 640×640
-        if len(outputs) < 2:
-            return None
-
-        scores = outputs[0].flatten()
-        bboxes = outputs[1].reshape(-1, 4)
-
-        best_idx  = -1
-        best_conf = 0.50  # Threshold minimum
-
-        for i, score in enumerate(scores):
-            if float(score) > best_conf:
-                best_conf = float(score)
-                best_idx  = i
-
-        if best_idx == -1:
-            return None
-
-        # Konversi koordinat dari skala 640 ke skala asli
-        x1 = int(bboxes[best_idx][0] * w_ori / 640)
-        y1 = int(bboxes[best_idx][1] * h_ori / 640)
-        x2 = int(bboxes[best_idx][2] * w_ori / 640)
-        y2 = int(bboxes[best_idx][3] * h_ori / 640)
-
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-
-        return [x1, y1, x2 - x1, y2 - y1]
+        return True
 
     def get_bbox(self, img):
         """
         Deteksi bounding box wajah.
-        Urutan: YuNet → Haar → Full Frame
+        Urutan: YuNet -> Haar -> Full Frame
         """
         h_img, w_img = img.shape[:2]
         full_frame   = [0, 0, w_img, h_img]
-    
+
         if self.yunet is not None:
             try:
                 self.yunet.setInputSize((w_img, h_img))
                 _, faces = self.yunet.detect(img)
-    
                 if faces is not None and len(faces) > 0:
                     face       = faces[0]
                     x, y, w, h = (
@@ -169,15 +113,11 @@ class AntiSpoofPredict(object):
                         int(face[2]), int(face[3])
                     )
                     confidence = float(face[14])
-    
-                    if confidence >= 0.75 and self._bbox_valid(
-                        x, y, w, h, w_img, h_img
-                    ):
+                    if confidence >= 0.75 and self._bbox_valid(x, y, w, h, w_img, h_img):
                         return self._add_padding(img, x, y, w, h)
-    
             except Exception:
                 pass
-    
+
         if self.haar is not None:
             try:
                 gray  = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -190,46 +130,18 @@ class AntiSpoofPredict(object):
                         return self._add_padding(img, x, y, w, h)
             except Exception:
                 pass
-    
+
         return full_frame
 
-    def _bbox_valid(self, x, y, w, h, w_img, h_img):
-        """
-        Validasi apakah bounding box masuk akal.
-    
-        Sebuah bbox dianggap TIDAK VALID jika:
-        1. Terlalu kecil  → kemungkinan mendeteksi bagian bukan wajah
-        2. Terlalu besar  → hampir full frame, deteksi gagal
-        3. Terlalu di atas/bawah → mendeteksi dahi atau dagu saja
-        """
-        luas_bbox  = w * h
-        luas_frame = w_img * h_img
-        rasio      = luas_bbox / luas_frame
-    
-        # Bbox terlalu kecil (< 3% frame) → deteksi bagian kecil wajah
-        if rasio < 0.03:
-            return False
-    
-        # Bbox terlalu besar (> 85% frame) → sama dengan full frame
-        if rasio > 0.85:
-            return False
-    
-        # Bbox terlalu sempit (lebar << tinggi) → bukan wajah
-        aspek = w / max(h, 1)
-        if aspek < 0.4 or aspek > 2.5:
-            return False
-    
-        return True
-    
-     def _add_padding(self, img, x, y, w, h, ratio=0.2):
-            h_img, w_img = img.shape[:2]
-            pad_x = int(w * ratio)
-            pad_y = int(h * ratio)
-            x1    = max(0,     x - pad_x)
-            y1    = max(0,     y - pad_y)
-            x2    = min(w_img, x + w + pad_x)
-            y2    = min(h_img, y + h + pad_y)
-            return [x1, y1, x2 - x1, y2 - y1]
+    def _add_padding(self, img, x, y, w, h, ratio=0.2):
+        h_img, w_img = img.shape[:2]
+        pad_x = int(w * ratio)
+        pad_y = int(h * ratio)
+        x1    = max(0,     x - pad_x)
+        y1    = max(0,     y - pad_y)
+        x2    = min(w_img, x + w + pad_x)
+        y2    = min(h_img, y + h + pad_y)
+        return [x1, y1, x2 - x1, y2 - y1]
 
     # =========================================================================
     # ANTI-SPOOFING
