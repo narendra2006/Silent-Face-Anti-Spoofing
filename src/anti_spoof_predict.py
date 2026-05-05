@@ -221,7 +221,7 @@ class AntiSpoofPredict(object):
     
         return True
     
-        def _add_padding(self, img, x, y, w, h, ratio=0.2):
+     def _add_padding(self, img, x, y, w, h, ratio=0.2):
             h_img, w_img = img.shape[:2]
             pad_x = int(w * ratio)
             pad_y = int(h * ratio)
