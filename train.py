@@ -106,6 +106,9 @@ if __name__ == "__main__":
     args    = parse_args()
     validasi_dataset(args.patch_info)
 
+    class_weights = torch.FloatTensor([2.0, 1.0]).to(device)
+    criterion     = torch.nn.CrossEntropyLoss(weight=class_weights)
+        
     conf    = get_default_config()
     conf    = update_config(args, conf)
     trainer = TrainMain(conf)
