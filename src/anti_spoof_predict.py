@@ -4,6 +4,8 @@ import torch
 import re
 import numpy as np
 import torch.nn.functional as F
+import insightface
+from insightface.app import FaceAnalysis
 from collections import OrderedDict
 from src.model_lib.MiniFASNet import MiniFASNetV1SE, MiniFASNetV2
 from src.data_io.transform import SDKTestTransform
@@ -16,12 +18,11 @@ MODEL_DICT = {
 
 YUNET_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'yunet.onnx')
 
-
 class AntiSpoofPredict(object):
     """
     Kelas utama prediksi anti-spoofing wajah.
 
-    Cascade Detector : YuNet -> Haar -> Full Frame
+    Cascade Detector : YuNet -> SCRFD -> Full Frame
     Anti-Spoofing    : MiniFASNet (3 skala, ensemble)
     """
 
@@ -32,7 +33,7 @@ class AntiSpoofPredict(object):
         self.model              = None
         self._loaded_model_path = None
         self._init_detectors()
-        print(f"✅ AntiSpoofPredict siap di device: {self.device}")
+        print(f" AntiSpoofPredict siap di device: {self.device}")
 
     # =========================================================================
     # DETEKSI WAJAH
@@ -40,11 +41,21 @@ class AntiSpoofPredict(object):
 
     def _init_detectors(self):
         self.yunet = self._load_yunet()
-        self.haar  = self._load_haar()
+        self.scrfd = self._load_scrfd() 
+
+    def _load_scrfd(self):
+        try:
+            app = FaceAnalysis(name='buffalo_s', allowed_modules=['detection'], providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+            app.prepare(ctx_id=0, det_size=(640, 640))
+            print(" [L2] SCRFD siap")
+            return app
+        except Exception as e:
+            print(f" [L2] SCRFD gagal dimuat: {e}")
+            return None
 
     def _load_yunet(self):
         if not os.path.exists(YUNET_MODEL_PATH):
-            print("⚠️ [L1] yunet.onnx tidak ditemukan")
+            print(" [L1] yunet.onnx tidak ditemukan")
             return None
         try:
             net = cv2.FaceDetectorYN.create(
@@ -55,20 +66,11 @@ class AntiSpoofPredict(object):
                 nms_threshold   = 0.30,
                 top_k           = 1
             )
-            print("✅ [L1] YuNet siap")
+            print(" [L1] YuNet siap")
             return net
         except Exception as e:
-            print(f"⚠️ [L1] YuNet gagal: {e}")
+            print(f" [L1] YuNet gagal: {e}")
             return None
-
-    def _load_haar(self):
-        path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        clf  = cv2.CascadeClassifier(path)
-        if clf.empty():
-            print("⚠️ [L2] Haar gagal")
-            return None
-        print("✅ [L2] Haar Cascade siap")
-        return clf
 
     def _bbox_valid(self, x, y, w, h, w_img, h_img):
         """
@@ -97,11 +99,12 @@ class AntiSpoofPredict(object):
     def get_bbox(self, img):
         """
         Deteksi bounding box wajah.
-        Urutan: YuNet -> Haar -> Full Frame
+        Urutan: YuNet (Utama) -> SCRFD (Fallback 2) -> Full Frame (Reject)
         """
         h_img, w_img = img.shape[:2]
         full_frame   = [0, 0, w_img, h_img]
 
+        # [L1] Coba dengan YuNet
         if self.yunet is not None:
             try:
                 self.yunet.setInputSize((w_img, h_img))
@@ -118,19 +121,23 @@ class AntiSpoofPredict(object):
             except Exception:
                 pass
 
-        if self.haar is not None:
+        # [L2] Jika YuNet gagal, gunakan SCRFD
+        if self.scrfd is not None:
             try:
-                gray  = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                faces = self.haar.detectMultiScale(
-                    gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-                )
+                faces = self.scrfd.get(img)
                 if len(faces) > 0:
-                    x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+                    # Ambil wajah pertama
+                    box = faces[0].bbox.astype(int)
+                    x, y = box[0], max(0, box[1]) 
+                    w, h = box[2] - box[0], box[3] - box[1]
+                    
                     if self._bbox_valid(x, y, w, h, w_img, h_img):
                         return self._add_padding(img, x, y, w, h)
             except Exception:
                 pass
 
+        # [L3] Jika keduanya gagal, kembalikan Full Frame 
+        # (Nanti di controller/looping tinggal dicek: if bbox == full_frame -> REJECT)
         return full_frame
 
     def _add_padding(self, img, x, y, w, h, ratio=0.2):
@@ -173,7 +180,7 @@ class AntiSpoofPredict(object):
 
         self.model.load_state_dict(clean_sd, strict=False)
         self._loaded_model_path = model_path
-        print(f"✅ Model di-load: {model_name}")
+        print(f" Model di-load: {model_name}")
 
     def predict(self, img, path):
         """
