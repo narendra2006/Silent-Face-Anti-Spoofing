@@ -17,15 +17,14 @@ from src.utility import make_if_not_exist, get_width_height, get_kernel
 
 def get_default_config():
     conf = EasyDict()
-
     # ----------------------training---------------
     conf.lr = 1e-3
-    # [9, 13, 15]
-    conf.milestones = [50, 100, 130]  # down learing rate
+    conf.milestones = [60, 100, 130]  
     conf.gamma = 0.1
     conf.epochs = 150
-    conf.momentum = 0.9
+    conf.momentum = 0.85 
     conf.batch_size = 8
+    conf.weight_decay = 5e-4 
 
     # model
     conf.num_classes = 2
